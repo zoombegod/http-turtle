@@ -52,7 +52,7 @@ action = function(host, port)
   local r = http.get( host, port, "" )
 
   if r then
-    output.http_port = port.number
+    output.http_port = host.ip .. ":" .. port.number
   end
 
   return output

@@ -4,7 +4,7 @@ import argparse
 import random
 import sys
 import requests
-import pprint
+from pprint import pprint
 
 
 
@@ -28,7 +28,7 @@ def parse_args():
 
   parser.add_argument('-p', metavar='PORTS', help='Ports to scan, default: 0-65535\nMay use expressions such as -p1-10 or -p1,4-10')
 
-  return parser.parse_args()
+  return parser
 
 
 
@@ -47,7 +47,7 @@ def write_file(filename, ip_addresses):
 
   with open(str(filename), 'w') as f:
     for ip_address in ip_addresses:
-      f.write(ip_address)
+      f.write(str(ip_address)+"\n")
 
 
 
@@ -114,7 +114,8 @@ def main():
   """
 
 
-  args = parse_args()
+  parser = parse_args()
+  args = parser.parse_args()
   ports = args.p
 
   # Resolve input and output file arguments
@@ -123,7 +124,9 @@ def main():
     input_file = args.i
     output_file = args.o
   else:
-    exit_err("Error: Arguments -i and -o are required")
+    print("Error: Arguments -i and -o are required")
+    parser.print_help()
+    exit(1)
 
   ip_list = read_file(input_file)
 
@@ -174,7 +177,9 @@ def main():
       except:
         continue
 
-  print(results)
+  results_list = []
+  [[results_list.append(F"{ip}:{port}") for port in results[ip]] for ip in results.keys()]
+  write_file(output_file, results_list)
 
 
 
