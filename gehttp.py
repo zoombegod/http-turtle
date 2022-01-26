@@ -9,6 +9,8 @@ import multiprocessing
 import os
 import subprocess
 
+STATUS_FILE = ".gehttp_status"
+
 
 def parse_args():
 
@@ -25,7 +27,7 @@ def parse_args():
 
   parser._optionals.title = 'options'
 
-  parser.add_argument('-i', metavar='inputfile', help='This is the only required argument:\nFile with line separated ip addresses to scan\nUse nmap -sL <target>|grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}"|sort -u\nto resolve CIDR notation or domain names')
+  parser.add_argument('-i', metavar='inputfile', help='This is the only required argument:\nFile with line separated ip addresses or domain names to scan\nUse nmap -sL <target>|grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}"|sort -u\nto resolve CIDR notation')
   parser.add_argument('-o', metavar='outputfile', help='Output file, results will be saved here')
 
   parser.add_argument('-p', metavar='ports', help='Ports to scan\nexpressions such as -p1-10 or -p1,4-10 are valid\ndefault: 0-65535')
@@ -37,6 +39,7 @@ def parse_args():
   parser.add_argument('--save-response', metavar='dir', help='Save the full successful responses in <dir>/<ip-address>:<port>.resp')
   parser.add_argument('--exec', metavar='command', help="Execute <command> after each successful hit.\n'wfuzz -w directories.wordlist http://$target/FUZZ'\n'firefox $html'\nSee --exec help or README.md for all options")
   parser.add_argument('--stdout', action="store_true", help="Write results to stdout, additionally.\nIf used together with --exec the output of the command will be merged")
+  parser.add_argument('--targets', action='store_true', help='Treat entries of inputfile as <ip>:<port> format')
     
   return parser
 
@@ -51,13 +54,13 @@ def exit_err(error_message):
 
 
 
-def write_file(filename, ip_addresses):
+def write_file(filename, lines):
 
-  """ Write a list of ip addresses to a file """
+  """ Write a list of lines to a file """
 
   with open(str(filename), 'w') as f:
-    for ip_address in ip_addresses:
-      f.write(str(ip_address)+"\n")
+    for line in lines:
+      f.write(str(line)+"\n")
 
 
 
@@ -68,11 +71,6 @@ def read_file(filename):
   with open(str(filename), 'r') as f:
     lines = [i.strip() for i in f.readlines()]
   return lines
-
-
-
-def screen(message):
-    print(message, file=sys.stderr)
 
 
 
@@ -94,7 +92,7 @@ def expand_dash(num_expr):
 
 def parse_port(port_expr):
 
-  """ Parse the port argument, expand '-' and ',', recursive """
+  """ Parse the port argument, expand expressions, recursive """
 
   if ',' in port_expr:
     ports_expanded = []
@@ -120,11 +118,9 @@ def parse_port(port_expr):
 
 
 
-def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command):
+def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, thread_id):
 
-  """ Perform the scan """
-
-  thread_id = random.randint(0,threads)
+  """ Scan a given list of targets for http services """
 
   # Random time offset for threads
 
@@ -137,20 +133,66 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
     time.sleep(time_offset)
 
 
-  # Scan
+  # Main loop over all targets
 
-  results_list = []
+  t_start = 99
 
   for target in targets_list:
-    screen(target)
+
+
+    # Write the progress in the thread status file
+
+    with open(STATUS_FILE+"_thread_"+str(thread_id), 'w') as f:
+      f.write(str(int(targets_list.index(target)/len(targets_list)*100)))
+
+
+    # If this is thread zero, print the progess in regular intervals 
+
+    t_end = time.time()
+
+    # Threaded version
+    if threads and t_end - t_start >= 2 and thread_id == 0:
+
+      # Gather data from all thread status files
+
+      threads_stat = {}
+
+      for i in range(threads):
+        thread_file = STATUS_FILE+"_thread_"+str(i)
+
+        if os.path.exists(thread_file):
+          with open(thread_file, 'r') as f:
+            progress = f.read()
+          threads_stat[i] = progress
+
+      # Calculate the overall status and print to stderr
+
+      stats = [int(threads_stat[k]) for k in threads_stat.keys()]
+      print(F"\rProgress: {int(sum(stats)/len(stats))}%", end='', file=sys.stderr)
+
+      t_start = time.time()
+
+
+    # Unthreaded version
+    elif not threads and t_end - t_start >= 2:
+      print(F"\rProgress: {int(targets_list.index(target)/len(targets_list)*100)}%", end='', file=sys.stderr)
+      t_start = time.time()
+
+
+    # Send the request, if it fails, skip it
     try:
+
       if delay:
         time.sleep(delay/1000)
+
+
       r = requests.get(F"http://{target}", timeout=timeout)
-      print(F"{target}")
-      results_list.append(target)
+
 
       # Various options for writing results
+      
+      if stdout:
+        print('\n'+target)
 
       if output_file:
         with open(output_file, 'a') as f:
@@ -187,20 +229,17 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
           .replace('$port',target.split(':')[1])\
           .replace('$status',str(r.raw.status))\
           .replace('$response',response_filename)\
-          .replace('$page',page_filename)\
+          .replace('$html',page_filename)\
 
         os.system(execute_command)
 
     except:
       continue
 
-  return results_list
-
-
 
 def main():
 
-  """ Init point and main body """
+  """ Initialize program, parse arguments and execute """
 
 
   """ Extract information from command line arguments
@@ -276,6 +315,11 @@ def main():
   else:
     execute_command = False
 
+  if args.stdout:
+    stdout = True
+  else:
+    stdout = False
+
 
 
   """ Prepare the data
@@ -290,19 +334,27 @@ def main():
 
   # Combine in a list and randomize
 
-  targets_list = []
-  [[targets_list.append(F"{ip}:{port}") for port in port_list] for ip in ip_list]
+
+  if args.targets:
+    targets_list = ip_list
+
+  else:
+    targets_list = []
+    [[targets_list.append(F"{ip}:{port}") for port in port_list] for ip in ip_list]
+
+  print(targets_list)
+
   random.shuffle(targets_list)
 
 
 
-  """ Perform the scan
+  """ Start the scan
   """
 
 
   # No threads
   if threads == False:
-    results_list = scan(targets_list, timeout, delay, 0, output_file, save_page_dir, save_response_dir, execute_command)
+    scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, 0)
 
 
   # Yes threads
@@ -329,22 +381,21 @@ def main():
           break
 
     
-    # Run parallelized scan
+    # Start parallelized processes
 
     processes = []
+    thread_id = 0
     for i in range(len(targets_batch)):
-      p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command])
+      p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, thread_id])
       p.start()
       processes.append(p) 
+      thread_id += 1
     for p in processes:
       p.join()
 
 
-    # Collect the results in one list
-
-    #results_list = []
-    #for i in results_obj:
-    #  results_list += i
+    print()
+    exit(0)
 
 
 
