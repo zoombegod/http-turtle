@@ -9,21 +9,21 @@ import multiprocessing
 import os
 import subprocess
 
+
 STATUS_FILE = ".gehttp_status"
+
 
 
 def parse_args():
 
-  """argparse argument parsing"""
+  """ Argument parsing by argparse """
 
   parser = argparse.ArgumentParser(\
     epilog='Example:\n\b' + sys.argv[0] + ' -i hosts_up.list > hosts_http.list',
 
-    # This class enables newlines in help messages
+    # Enable newlines in help description
     formatter_class=argparse.RawTextHelpFormatter)
 
-
-  #parser.error = parser_error
 
   parser._optionals.title = 'options'
 
@@ -33,12 +33,19 @@ def parse_args():
   parser.add_argument('-p', metavar='ports', help='Ports to scan\nexpressions such as -p1-10 or -p1,4-10 are valid\ndefault: 0-65535')
 
   parser.add_argument('--timeout', metavar='seconds', help='Seconds to wait for a response, default: 3')
+
   parser.add_argument('--delay', metavar='milliseconds', help='Milliseconds to wait between requests\nWith threading the real delay will be different since each thread\nmakes its own requests. However, each thread will have\na random offset to distribute requests evenly on a time basis\ndefault: 0')
+
   parser.add_argument('--threads', metavar='number', help=F'Thread multiplier: number * <#cores> = threads\nThis is equal to the number of concurrent requests\nYou have {multiprocessing.cpu_count()} cores available\n0 disables threading (default)')
+
   parser.add_argument('--save-page', metavar='dir', help='Save (HTML) pages in <dir>/<ip-address>:<port>.html')
+
   parser.add_argument('--save-response', metavar='dir', help='Save the full successful responses in <dir>/<ip-address>:<port>.resp')
+
   parser.add_argument('--exec', metavar='command', help="Execute <command> after each successful hit.\n'wfuzz -w directories.wordlist http://$target/FUZZ'\n'firefox $html'\nSee --exec help or README.md for all options")
+
   parser.add_argument('--stdout', action="store_true", help="Write results to stdout, additionally.\nIf used together with --exec the output of the command will be merged")
+
   parser.add_argument('--targets', action='store_true', help='Treat entries of inputfile as <ip>:<port> format')
     
   return parser
@@ -70,6 +77,7 @@ def read_file(filename):
 
   with open(str(filename), 'r') as f:
     lines = [i.strip() for i in f.readlines()]
+
   return lines
 
 
@@ -86,6 +94,7 @@ def expand_dash(num_expr):
     return False
 
   numbers = [i for i in range(numbers[0], numbers[1]+1)]
+
   return numbers
   
 
@@ -94,13 +103,18 @@ def parse_port(port_expr):
 
   """ Parse the port argument, expand expressions, recursive """
 
+  # Expand comma
+
   if ',' in port_expr:
     ports_expanded = []
 
     for expr in port_expr.split(','):
       ports_expanded += parse_port(expr)
+
     return ports_expanded
 
+
+  # Expand dash
 
   elif '-' in port_expr:
     ports_expanded = []
@@ -109,9 +123,12 @@ def parse_port(port_expr):
 
     if ports_expanded:
       return ports_expanded
+
     else:
       return False
 
+
+  # Nothing to expand, termination condition
 
   else:
     return [int(port_expr)]
@@ -122,7 +139,11 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
 
   """ Scan a given list of targets for http services """
 
-  # Random time offset for threads
+  """ Time offset
+  """
+
+  # If threaded wait for a random time to distribute
+  # requests evenly by offsetting the starting time
 
   if threads != 0:
     if delay:
@@ -133,25 +154,28 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
     time.sleep(time_offset)
 
 
-  # Main loop over all targets
+  """ Main loop over all targets
+  """
 
   t_start = 99
-
   for target in targets_list:
 
-
-    # Write the progress in the thread status file
+    # Write the progress to the thread status file
 
     with open(STATUS_FILE+"_thread_"+str(thread_id), 'w') as f:
       f.write(str(int(targets_list.index(target)/len(targets_list)*100)))
 
 
-    # If this is thread zero, print the progess in regular intervals 
+    """ Print status message
+    """
 
     t_end = time.time()
 
-    # Threaded version
+    ## Threaded version
     if threads and t_end - t_start >= 2 and thread_id == 0:
+
+      t_start = time.time()
+
 
       # Gather data from all thread status files
 
@@ -165,31 +189,46 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
             progress = f.read()
           threads_stat[i] = progress
 
-      # Calculate the overall status and print to stderr
+
+      # Calculate the overall progress
 
       stats = [int(threads_stat[k]) for k in threads_stat.keys()]
+
+
+      # Print to stderr
+
       print(F"\rProgress: {int(sum(stats)/len(stats))}%", end='', file=sys.stderr)
 
-      t_start = time.time()
 
 
-    # Unthreaded version
+    ## Unthreaded version
     elif not threads and t_end - t_start >= 2:
-      print(F"\rProgress: {int(targets_list.index(target)/len(targets_list)*100)}%", end='', file=sys.stderr)
+
       t_start = time.time()
 
+      print(F"\rProgress: {int(targets_list.index(target)/len(targets_list)*100)}%", end='', file=sys.stderr)
 
-    # Send the request, if it fails, skip it
+
+    """ Request HTTP on a special port
+    """
+
     try:
+
+      """ Delay
+      """
 
       if delay:
         time.sleep(delay/1000)
 
 
+      """ Request
+      """
+
       r = requests.get(F"http://{target}", timeout=timeout)
 
 
-      # Various options for writing results
+      """ Command line options
+      """
       
       if stdout:
         print('\n'+target)
@@ -204,7 +243,6 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
           f.write(r.text+'\n')
 
       if save_response_dir:
-        # needs 1st line of response HTTP/1.1 200 OK
         response_filename = os.path.join(save_response_dir, F"{target}")
         with open(response_filename, 'w') as f:
 
@@ -239,19 +277,18 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
 
 def main():
 
-  """ Initialize program, parse arguments and execute """
+  """ Initialize program, parse arguments, execute """
 
 
   """ Extract information from command line arguments
   """
-
 
   parser = parse_args()
   args = parser.parse_args()
   ports = args.p
 
 
-  # Resolve input and output file arguments
+  # Input and output file
 
   if args.i:
     input_file = args.i
@@ -266,10 +303,8 @@ def main():
   else:
     output_file = False
 
-  ip_list = read_file(input_file)
 
-
-  # Resolve ports argument
+  # Ports
 
   if args.p:
     port_list = parse_port(args.p)
@@ -277,7 +312,7 @@ def main():
     port_list = [i for i in range(0,2**16)]
 
 
-  # Resolve other arguments
+  # Timeout, delay, threads
 
   if args.timeout:
     timeout = int(args.timeout)
@@ -295,6 +330,9 @@ def main():
     threads = int(args.threads)
   else:
     threads = False
+
+
+  # Save page, save response, exec, stdout
 
   if args.save_page:
     if not os.path.exists(args.save_page):
@@ -325,6 +363,8 @@ def main():
   """ Prepare the data
   """
 
+  ip_list = read_file(input_file)
+
 
   # Remove duplicates
 
@@ -332,8 +372,7 @@ def main():
   port_list = list(set(port_list))
    
 
-  # Combine in a list and randomize
-
+  # Combine in a list
 
   if args.targets:
     targets_list = ip_list
@@ -342,31 +381,30 @@ def main():
     targets_list = []
     [[targets_list.append(F"{ip}:{port}") for port in port_list] for ip in ip_list]
 
-  print(targets_list)
+
+  # Randomize
 
   random.shuffle(targets_list)
-
 
 
   """ Start the scan
   """
 
-
-  # No threads
+  # NO threads
   if threads == False:
     scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, 0)
 
 
-  # Yes threads
+  # YES threads
   else:
 
-    # Prepare multiprocessing
+    # Init multiprocessing
   
     threads = multiprocessing.cpu_count() * threads
     batch_size = int(len(targets_list)/threads)
 
 
-    # [threads] equally sized batches of target lists
+    # Create [threads] equally sized batches
 
     targets_batch = [[] for i in range(threads)]
 
@@ -381,7 +419,7 @@ def main():
           break
 
     
-    # Start parallelized processes
+    # Start threads
 
     processes = []
     thread_id = 0
@@ -390,12 +428,20 @@ def main():
       p.start()
       processes.append(p) 
       thread_id += 1
+
+
+    # Wait for threads to finish
+
     for p in processes:
       p.join()
 
 
-    print()
-    exit(0)
+  """ End of program
+  """
+
+  print("", file=sys.stderr)
+  print("Done", file=sys.stderr)
+  exit(0)
 
 
 
