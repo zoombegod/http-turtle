@@ -20,13 +20,15 @@ def parse_args():
 
 
   #parser.error = parser_error
-  parser._optionals.title = 'arguments'
+  parser._optionals.title = 'options'
 
-  parser.add_argument('-i', metavar='INPUT_FILE', help='File with line separated ip addresses to scan. \nUse \'nmap -sL <ip-address>|grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}"|sort -u\' to resolve CIDR notation or domain names')
+  parser.add_argument('-i', metavar='inputfile', help='[required] file with line separated ip addresses to scan. \nuse nmap -sL <target>|grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}"|sort -u\nto resolve CIDR notation or domain names')
 
-  parser.add_argument('-o', metavar='OUTPUT_FILE', help='Output file for results')
+  parser.add_argument('-o', metavar='outputfile', help='[optional] output file for results')
 
-  parser.add_argument('-p', metavar='PORTS', help='Ports to scan, default: 0-65535\nMay use expressions such as -p1-10 or -p1,4-10')
+  parser.add_argument('-p', metavar='ports', help='[optional] ports to scan, default: 0-65535\nexpressions such as -p1-10 or -p1,4-10 are valid')
+
+  parser.add_argument('--timeout', metavar='seconds', help='[optional] seconds to wait for a response, default: 3')
 
   return parser
 
@@ -120,13 +122,17 @@ def main():
 
   # Resolve input and output file arguments
 
-  if args.i and args.o:
+  if args.i:
     input_file = args.i
-    output_file = args.o
   else:
-    print("Error: Arguments -i and -o are required")
+    print("Error: Argument -i inputfile is required")
     parser.print_help()
     exit(1)
+
+  if args.o:
+    output_file = args.o
+  else:
+    output_file = False
 
   ip_list = read_file(input_file)
 
@@ -137,6 +143,14 @@ def main():
     port_list = parse_port(args.p)
   else:
     port_list = [i for i in range(0,2**16)]
+
+
+  # Resolve other arguments
+
+  if args.timeout:
+    timeout = int(args.timeout)
+  else:
+    timeout = 2
 
 
 
@@ -166,9 +180,11 @@ def main():
   for ip in ip_list:
     print(F"Now scanning {ip}")
     for port in port_list:
+      print(port)
 
       try:
-        r = requests.get(F"http://{ip}:{port}")
+        print(timeout)
+        r = requests.get(F"http://{ip}:{port}", timeout=timeout)
         if ip not in results.keys():
           results[ip]=[]
         results[ip].append(port)
@@ -177,9 +193,10 @@ def main():
       except:
         continue
 
-  results_list = []
-  [[results_list.append(F"{ip}:{port}") for port in results[ip]] for ip in results.keys()]
-  write_file(output_file, results_list)
+  if output_file:
+    results_list = []
+    [[results_list.append(F"{ip}:{port}") for port in results[ip]] for ip in results.keys()]
+    write_file(output_file, results_list)
 
 
 
