@@ -4,6 +4,7 @@ import argparse
 import random
 import sys
 import requests
+import time
 from pprint import pprint
 
 
@@ -22,13 +23,14 @@ def parse_args():
   #parser.error = parser_error
   parser._optionals.title = 'options'
 
-  parser.add_argument('-i', metavar='inputfile', help='[required] file with line separated ip addresses to scan. \nuse nmap -sL <target>|grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}"|sort -u\nto resolve CIDR notation or domain names')
+  parser.add_argument('-i', metavar='inputfile', help='This is the only required argument:\nFile with line separated ip addresses to scan. \nUse nmap -sL <target>|grep -Eo "([0-9]{1,3}\.){3}[0-9]{1,3}"|sort -u\nto resolve CIDR notation or domain names')
 
-  parser.add_argument('-o', metavar='outputfile', help='[optional] output file for results')
+  parser.add_argument('-o', metavar='outputfile', help='Output file for results')
 
-  parser.add_argument('-p', metavar='ports', help='[optional] ports to scan, default: 0-65535\nexpressions such as -p1-10 or -p1,4-10 are valid')
+  parser.add_argument('-p', metavar='ports', help='Ports to scan, default: 0-65535\nexpressions such as -p1-10 or -p1,4-10 are valid')
 
-  parser.add_argument('--timeout', metavar='seconds', help='[optional] seconds to wait for a response, default: 3')
+  parser.add_argument('--timeout', metavar='seconds', help='Seconds to wait for a response, default: 3')
+  parser.add_argument('--delay', metavar='milliseconds', help='Milliseconds to wait between requests, default: 0')
 
   return parser
 
@@ -150,7 +152,12 @@ def main():
   if args.timeout:
     timeout = int(args.timeout)
   else:
-    timeout = 2
+    timeout = 3
+
+  if args.delay:
+    delay = int(args.delay)
+  else:
+    delay = False
 
 
 
@@ -164,10 +171,11 @@ def main():
   port_list = list(set(port_list))
    
 
-  # Randomize ip and port lists
+  # Combine in a list and randomize
 
-  random.shuffle(ip_list)
-  random.shuffle(port_list)
+  targets_list = []
+  [[targets_list.append(F"{ip}:{port}") for port in port_list] for ip in ip_list]
+  random.shuffle(targets_list)
 
 
 
@@ -175,23 +183,25 @@ def main():
   """
 
 
-  results = {}
+  results_list = []
+  current_target = ""
 
-  for ip in ip_list:
-    print(F"Now scanning {ip}")
-    for port in port_list:
-      print(port)
+  for target in targets_list:
+    ip = target.split(":")[0]
 
-      try:
-        print(timeout)
-        r = requests.get(F"http://{ip}:{port}", timeout=timeout)
-        if ip not in results.keys():
-          results[ip]=[]
-        results[ip].append(port)
-        print(F"{ip}:{port}")
+    if current_target != ip:
+      current_target = ip
+      print(F"Sanning {ip}")
 
-      except:
-        continue
+    try:
+      if delay:
+        time.sleep(delay/1000)
+      r = requests.get(F"http://{target}", timeout=timeout)
+      results_list.append(target)
+      print(F"{target}")
+
+    except:
+      continue
 
   if output_file:
     results_list = []
