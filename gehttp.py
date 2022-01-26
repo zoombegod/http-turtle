@@ -7,6 +7,7 @@ import requests
 import time
 import multiprocessing
 import os
+import subprocess
 
 
 def parse_args():
@@ -35,6 +36,7 @@ def parse_args():
   parser.add_argument('--save-page', metavar='dir', help='Save (HTML) pages in <dir>/<ip-address>:<port>.html')
   parser.add_argument('--save-response', metavar='dir', help='Save the full successful responses in <dir>/<ip-address>:<port>.resp')
   parser.add_argument('--exec', metavar='command', help="Execute <command> after each successful hit.\n'wfuzz -w directories.wordlist http://$target/FUZZ'\n'firefox $html'\nSee --exec help or README.md for all options")
+  parser.add_argument('--stdout', action="store_true", help="Write results to stdout, additionally.\nIf used together with --exec the output of the command will be merged")
     
   return parser
 
@@ -118,7 +120,7 @@ def parse_port(port_expr):
 
 
 
-def scan(targets_list, timeout, delay, threads, output_file, savepagedir, saveresponsedir):
+def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command):
 
   """ Perform the scan """
 
@@ -154,15 +156,15 @@ def scan(targets_list, timeout, delay, threads, output_file, savepagedir, savere
         with open(output_file, 'a') as f:
           f.write(target+'\n')
 
-      if savepagedir:
-        filename = os.path.join(savepagedir, F"{target}")
-        with open(filename, 'w') as f:
-          f.write(r.text)
+      if save_page_dir:
+        page_filename = os.path.join(save_page_dir, F"{target}")
+        with open(page_filename, 'w') as f:
+          f.write(r.text+'\n')
 
-      if saveresponsedir:
+      if save_response_dir:
         # needs 1st line of response HTTP/1.1 200 OK
-        filename = os.path.join(saveresponsedir, F"{target}")
-        with open(filename, 'w') as f:
+        response_filename = os.path.join(save_response_dir, F"{target}")
+        with open(response_filename, 'w') as f:
 
           if r.raw.version == 11:
             http_version = "1.1"
@@ -177,6 +179,17 @@ def scan(targets_list, timeout, delay, threads, output_file, savepagedir, savere
             f.write(F"{k}: {r.headers[k]}\n")
 
           f.write('\n\n'+r.text+'\n')
+
+      if execute_command:
+        execute_command = execute_command\
+          .replace('$target',target)\
+          .replace('$ip',target.split(':')[0])\
+          .replace('$port',target.split(':')[1])\
+          .replace('$status',str(r.raw.status))\
+          .replace('$response',response_filename)\
+          .replace('$page',page_filename)\
+
+        os.system(execute_command)
 
     except:
       continue
@@ -247,16 +260,21 @@ def main():
   if args.save_page:
     if not os.path.exists(args.save_page):
       os.makedirs(args.save_page)
-    savepagedir = args.save_page
+    save_page_dir = args.save_page
   else:
-    savepagedir = False
+    save_page_dir = False
 
   if args.save_response:
     if not os.path.exists(args.save_response):
       os.makedirs(args.save_response)
-    saveresponsedir = args.save_response
+    save_response_dir = args.save_response
   else:
-    saveresponsedir = False
+    save_response_dir = False
+
+  if args.exec:
+    execute_command = args.exec
+  else:
+    execute_command = False
 
 
 
@@ -284,7 +302,7 @@ def main():
 
   # No threads
   if threads == False:
-    results_list = scan(targets_list, timeout, delay, 0, output_file, savepagedir, saveresponsedir)
+    results_list = scan(targets_list, timeout, delay, 0, output_file, save_page_dir, save_response_dir, execute_command)
 
 
   # Yes threads
@@ -315,7 +333,7 @@ def main():
 
     processes = []
     for i in range(len(targets_batch)):
-      p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, savepagedir, saveresponsedir])
+      p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command])
       p.start()
       processes.append(p) 
     for p in processes:
