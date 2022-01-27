@@ -8,9 +8,40 @@ import time
 import multiprocessing
 import os
 import subprocess
+import signal
 
 
 STATUS_FILE = ".gehttp_status"
+
+
+
+def cleanup():
+
+  # Remove status file
+
+  files = os.listdir(".")
+  files = [f for f in files if STATUS_FILE in f]
+
+  for file in files:
+    os.remove(file)
+
+
+
+def sigint_handler_main(sig_num, i):
+
+  # Do nothing
+  return
+
+
+
+def sigint_handler_thread(sig_num, i):
+
+  """ Handle SIGINT
+  """
+
+  os.kill(os.getpid(), signal.SIGKILL)
+  sys.exit()
+  exit()
 
 
 
@@ -36,7 +67,7 @@ def parse_args():
 
   parser.add_argument('--delay', metavar='milliseconds', help='Milliseconds to wait between requests\nWith threading the real delay will be different since each thread\nmakes its own requests. However, each thread will have\na random offset to distribute requests evenly on a time basis\ndefault: 0')
 
-  parser.add_argument('--threads', metavar='number', help=F'Thread multiplier: number * <#cores> = threads\nThis is equal to the number of concurrent requests\nYou have {multiprocessing.cpu_count()} cores available\n0 disables threading (default)')
+  parser.add_argument('--threads', metavar='number', help=F'Thread multiplier: number * <#cores> = threads\nnumber can be an integer or a float\nthreads is equal to the maximum of concurrent requests\nYou have {multiprocessing.cpu_count()} cores available\n0 disables threading (default)')
 
   parser.add_argument('--save-page', metavar='dir', help='Save (HTML) pages in <dir>/<ip-address>:<port>.html')
 
@@ -187,7 +218,9 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
         if os.path.exists(thread_file):
           with open(thread_file, 'r') as f:
             progress = f.read()
-          threads_stat[i] = progress
+
+          if progress.isnumeric():
+            threads_stat[i] = progress
 
 
       # Calculate the overall progress
@@ -280,6 +313,11 @@ def main():
   """ Initialize program, parse arguments, execute """
 
 
+  # On SIGINT kill self with SIGKILL
+
+  signal.signal(signal.SIGINT, sigint_handler_thread)
+
+
   """ Extract information from command line arguments
   """
 
@@ -327,7 +365,7 @@ def main():
   if args.threads:
     if args.threads == 0:
       threads = False
-    threads = int(args.threads)
+    threads = float(args.threads)
   else:
     threads = False
 
@@ -400,7 +438,7 @@ def main():
 
     # Init multiprocessing
   
-    threads = multiprocessing.cpu_count() * threads
+    threads = int(multiprocessing.cpu_count() * threads)
     batch_size = int(len(targets_list)/threads)
 
 
@@ -423,24 +461,36 @@ def main():
 
     processes = []
     thread_id = 0
+
     for i in range(len(targets_batch)):
+
       p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, thread_id])
+
       p.start()
-      processes.append(p) 
+
+      processes.append(p)
+
       thread_id += 1
+
+
+    # SIGINT handler of the main process, performs cleanup
+
+    signal.signal(signal.SIGINT, sigint_handler_main)
 
 
     # Wait for threads to finish
 
     for p in processes:
-      p.join()
+      if p.is_alive():
+        p.join()
+
+    cleanup()
 
 
   """ End of program
   """
 
   print("", file=sys.stderr)
-  print("Done", file=sys.stderr)
   exit(0)
 
 
