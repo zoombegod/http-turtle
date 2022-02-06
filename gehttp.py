@@ -27,6 +27,19 @@ def cleanup():
 
 
 
+def dircheck(directory):
+
+  # Handle direcory creation and more
+
+  if not os.path.exists(directory):
+    os.makedirs(directory)
+    return
+
+  if os.path.isfile(directory):
+      exit_err(F"Error: directory {directory} is a file")
+
+
+
 def sigint_handler_main(sig_num, i):
 
   # Do nothing
@@ -69,16 +82,16 @@ def parse_args():
 
   parser.add_argument('--threads', metavar='number', help=F'Thread multiplier: number * <#cores> = threads\nnumber can be an integer or a float\nthreads is equal to the maximum of concurrent requests\nYou have {multiprocessing.cpu_count()} cores available\n0 disables threading (default)')
 
-  parser.add_argument('--save-page', metavar='dir', help='Save (HTML) pages in <dir>/<ip-address>:<port>.html')
+  parser.add_argument('--save-html', metavar='dir', help='Save (mostly HTML) pages in <dir>/<ip-address>:<port>.html')
 
   parser.add_argument('--save-response', metavar='dir', help='Save the full successful responses in <dir>/<ip-address>:<port>.resp')
 
-  parser.add_argument('--exec', metavar='command', help="Execute <command> after each successful hit.\n'wfuzz -w directories.wordlist http://$target/FUZZ'\n'firefox $html'\nSee --exec help or README.md for all options")
+  parser.add_argument('--exec', metavar='command', help="Execute <command> after each successful hit.\n'wfuzz -w directories.wordlist http://%target/FUZZ'\n'firefox %html'\nSee --exec help or README.md for all options")
 
   parser.add_argument('--stdout', action="store_true", help="Write results to stdout, additionally.\nIf used together with --exec the output of the command will be merged")
 
   parser.add_argument('--targets', action='store_true', help='Treat entries of inputfile as <ip>:<port> format')
-    
+
   return parser
 
 
@@ -127,7 +140,7 @@ def expand_dash(num_expr):
   numbers = [i for i in range(numbers[0], numbers[1]+1)]
 
   return numbers
-  
+
 
 
 def parse_port(port_expr):
@@ -166,7 +179,7 @@ def parse_port(port_expr):
 
 
 
-def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, thread_id):
+def scan(targets_list, timeout, delay, threads, output_file, save_html_dir, save_response_dir, execute_command, stdout, thread_id):
 
   """ Scan a given list of targets for http services """
 
@@ -193,8 +206,9 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
 
     # Write the progress to the thread status file
 
-    with open(STATUS_FILE+"_thread_"+str(thread_id), 'w') as f:
-      f.write(str(int(targets_list.index(target)/len(targets_list)*100)))
+    if threads:
+      with open(STATUS_FILE+"_thread_"+str(thread_id), 'w') as f:
+        f.write(str(int(targets_list.index(target)/len(targets_list)*100)))
 
 
     """ Print status message
@@ -262,7 +276,7 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
 
       """ Command line options
       """
-      
+
       if stdout:
         print('\n'+target)
 
@@ -270,8 +284,8 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
         with open(output_file, 'a') as f:
           f.write(target+'\n')
 
-      if save_page_dir:
-        page_filename = os.path.join(save_page_dir, F"{target}")
+      if save_html_dir:
+        page_filename = os.path.join(save_html_dir, F"{target}")
         with open(page_filename, 'w') as f:
           f.write(r.text+'\n')
 
@@ -295,12 +309,12 @@ def scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save
 
       if execute_command:
         execute_command = execute_command\
-          .replace('$target',target)\
-          .replace('$ip',target.split(':')[0])\
-          .replace('$port',target.split(':')[1])\
-          .replace('$status',str(r.raw.status))\
-          .replace('$response',response_filename)\
-          .replace('$html',page_filename)\
+          .replace('%target',target)\
+          .replace('%ip',target.split(':')[0])\
+          .replace('%port',target.split(':')[1])\
+          .replace('%status',str(r.raw.status))\
+          .replace('%response',response_filename)\
+          .replace('%html',page_filename)\
 
         os.system(execute_command)
 
@@ -329,7 +343,10 @@ def main():
   # Input and output file
 
   if args.i:
-    input_file = args.i
+    if os.path.exists(args.i) and os.path.isfile(args.i):
+        input_file = args.i
+    else:
+        exit_err(F"Error: {args.i} does not exist ot is not a file")
   else:
     parser.print_help()
     exit_err("Error: Argument -i inputfile is required")
@@ -372,21 +389,23 @@ def main():
 
   # Save page, save response, exec, stdout
 
-  if args.save_page:
-    if not os.path.exists(args.save_page):
-      os.makedirs(args.save_page)
-    save_page_dir = args.save_page
+  if args.save_html:
+    dircheck(args.save_html)
+    save_html_dir = args.save_html
   else:
-    save_page_dir = False
+    save_html_dir = False
 
   if args.save_response:
-    if not os.path.exists(args.save_response):
-      os.makedirs(args.save_response)
+    dircheck(args.save_response)
     save_response_dir = args.save_response
   else:
     save_response_dir = False
 
   if args.exec:
+    if '%html' in args.exec and not save_html_dir:
+        exit_err("Error: variable %html used in --exec but --save-html is empty")
+    if '%response' in args.exec and not save_response_dir:
+        exit_err("Error: variable %response used in --exec but --save-response is empty")
     execute_command = args.exec
   else:
     execute_command = False
@@ -404,11 +423,19 @@ def main():
   ip_list = read_file(input_file)
 
 
+  # Check format
+
+  if not args.targets:
+      for i in ip_list:
+          if ':' in i:
+              exit_err(F"Error: Bad format {i}")
+
+
   # Remove duplicates
 
   ip_list = list(set(ip_list))
   port_list = list(set(port_list))
-   
+
 
   # Combine in a list
 
@@ -430,14 +457,14 @@ def main():
 
   # NO threads
   if threads == False:
-    scan(targets_list, timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, 0)
+    scan(targets_list, timeout, delay, threads, output_file, save_html_dir, save_response_dir, execute_command, stdout, 0)
 
 
   # YES threads
   else:
 
     # Init multiprocessing
-  
+
     threads = int(multiprocessing.cpu_count() * threads)
     batch_size = int(len(targets_list)/threads)
 
@@ -456,7 +483,7 @@ def main():
         except:
           break
 
-    
+
     # Start threads
 
     processes = []
@@ -464,7 +491,7 @@ def main():
 
     for i in range(len(targets_batch)):
 
-      p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, save_page_dir, save_response_dir, execute_command, stdout, thread_id])
+      p = multiprocessing.Process(target=scan, args = [targets_batch[i], timeout, delay, threads, output_file, save_html_dir, save_response_dir, execute_command, stdout, thread_id])
 
       p.start()
 
